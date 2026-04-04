@@ -1,0 +1,13 @@
+{
+  "name": "kiro-orchestration",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node node_runtime/src/app.js",
+    "test": "node --test node_runtime/test/orchestration.test.js"
+  }
+}
