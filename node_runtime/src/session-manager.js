@@ -2,15 +2,24 @@ import { MessageType } from './event-router.js';
 import { SessionState, SessionStatus } from './models.js';
 
 export class SessionManager {
-  constructor({ sessionFactory, router, idleTimeoutMs = 24 * 60 * 60 * 1000 }) {
+  constructor({
+    sessionFactory,
+    router,
+    idleTimeoutMs = 24 * 60 * 60 * 1000,
+    debounceWindowMs = 300,
+    mergeSeparator = '\n\n---\n\n',
+  }) {
     this.sessionFactory = sessionFactory;
     this.router = router;
     this.idleTimeoutMs = idleTimeoutMs;
+    this.debounceWindowMs = debounceWindowMs;
+    this.mergeSeparator = mergeSeparator;
+
     this.sessions = new Map();
     this.processedEventIds = new Set();
   }
 
-  handleEvent(event) {
+  async handleEvent(event) {
     if (this.processedEventIds.has(event.eventId)) {
       return MessageType.IGNORE;
     }
@@ -24,15 +33,19 @@ export class SessionManager {
       record = {
         state: new SessionState(event.taskId),
         process: this.sessionFactory(),
+        pipeline: Promise.resolve(),
+        pendingMessages: [],
+        debounceTimer: null,
       };
       this.sessions.set(event.taskId, record);
     }
 
     const outbound = this.router.toAgentMessage(msgType, event);
-    record.process.send(outbound);
     record.state.lastMessage = outbound;
     record.state.lastEventAt = new Date();
     record.state.status = SessionStatus.ACTIVE;
+
+    await this.#enqueueBufferedSend(record, outbound);
     return msgType;
   }
 
@@ -65,5 +78,38 @@ export class SessionManager {
     record.process.stop();
     record.state.status = SessionStatus.TERMINATE;
     return true;
+  }
+
+  #enqueueBufferedSend(record, outbound) {
+    return new Promise((resolve, reject) => {
+      record.pendingMessages.push({ outbound, resolve, reject });
+
+      if (record.debounceTimer) {
+        clearTimeout(record.debounceTimer);
+      }
+
+      record.debounceTimer = setTimeout(() => {
+        record.debounceTimer = null;
+        this.#flushPending(record);
+      }, this.debounceWindowMs);
+    });
+  }
+
+  #flushPending(record) {
+    if (record.pendingMessages.length === 0) return;
+
+    const batch = record.pendingMessages.splice(0, record.pendingMessages.length);
+    const mergedMessage = batch.map((item) => item.outbound).join(this.mergeSeparator);
+
+    record.pipeline = record.pipeline
+      .then(async () => {
+        await record.process.send(mergedMessage);
+      })
+      .then(() => {
+        for (const item of batch) item.resolve();
+      })
+      .catch((error) => {
+        for (const item of batch) item.reject(error);
+      });
   }
 }

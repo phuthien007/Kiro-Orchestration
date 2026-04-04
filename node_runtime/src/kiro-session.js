@@ -10,15 +10,20 @@ You MUST:
 
 Always track Task ID.`;
 
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class KiroSession {
-  constructor({ command, args = [], cwd } = {}) {
+  constructor({ command, args = [], cwd, interactionDelayMs = 0 } = {}) {
     this.command = command;
     this.args = args;
     this.cwd = cwd;
+    this.interactionDelayMs = interactionDelayMs;
     this.proc = null;
   }
 
-  start() {
+  async start() {
     if (this.proc && !this.proc.killed) {
       return;
     }
@@ -28,15 +33,25 @@ export class KiroSession {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    this.send(SYSTEM_PROMPT);
+    await this.send(SYSTEM_PROMPT);
   }
 
-  send(message) {
-    if (!this.proc || this.proc.killed) this.start();
+  async send(message) {
+    if (!this.proc || this.proc.killed) await this.start();
     if (!this.proc?.stdin || this.proc.stdin.destroyed) {
       throw new Error('Kiro process is not available');
     }
-    this.proc.stdin.write(`${message}\n`);
+
+    await new Promise((resolve, reject) => {
+      this.proc.stdin.write(`${message}\n`, (error) => {
+        if (error) reject(error);
+        else resolve();
+      });
+    });
+
+    if (this.interactionDelayMs > 0) {
+      await wait(this.interactionDelayMs);
+    }
   }
 
   stop() {

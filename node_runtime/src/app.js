@@ -27,7 +27,7 @@ export function createWebhookServer({ listener = new EventListener(), manager = 
       const payload = body ? JSON.parse(body) : {};
 
       const event = listener.normalize(source, payload);
-      const messageType = manager.handleEvent(event);
+      const messageType = await manager.handleEvent(event);
 
       const response = JSON.stringify({ ok: true, message_type: messageType, task_id: event.taskId });
       res.statusCode = 200;
